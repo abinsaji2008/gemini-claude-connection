@@ -1,5 +1,3 @@
-const crypto = require('node:crypto');
-
 const DEFAULT_MODEL_MAP = {
   'claude-opus-5-5': {
     upstream: 'gemini-3.1-pro',
@@ -24,21 +22,6 @@ function readModelMap() {
   return parsed;
 }
 
-function suppliedKey(req) {
-  const auth = req.headers.authorization || '';
-  const match = /^Bearer\\s+(.+)$/i.exec(auth);
-  return (match ? match[1] : req.headers['x-api-key'] || '').trim();
-}
-
-function authorized(req) {
-  const expected = process.env.GATEWAY_API_KEY || '';
-  const supplied = suppliedKey(req);
-  if (!expected || !supplied) return false;
-  const a = Buffer.from(supplied);
-  const b = Buffer.from(expected);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
-
 module.exports = function models(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -52,17 +35,9 @@ module.exports = function models(req, res) {
     }));
   }
 
-  if (!authorized(req)) {
-    res.statusCode = process.env.GATEWAY_API_KEY ? 401 : 503;
-    return res.end(JSON.stringify({
-      type: 'error',
-      error: {
-        type: process.env.GATEWAY_API_KEY ? 'authentication_error' : 'api_error',
-        message: process.env.GATEWAY_API_KEY ? 'Invalid gateway API key.' : 'Gateway is not configured.',
-      },
-    }));
-  }
-
+  // Model IDs are non-sensitive metadata. Keep discovery public so desktop clients
+  // can populate the model picker before applying credentials to inference calls.
+  // All inference routes remain protected by GATEWAY_API_KEY.
   try {
     const data = Object.entries(readModelMap()).map(([id, entry]) => ({
       type: 'model',

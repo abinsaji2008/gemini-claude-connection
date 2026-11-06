@@ -60,4 +60,11 @@ You can override these aliases with a `MODEL_MAP` JSON object in Vercel, for exa
 }
 ```
 
-After changing code or environment variables, redeploy the Vercel project.
+After changing code or environment variables, create a fresh Production deployment from the latest `main` branch commit. A redeploy of an older deployment can retain its original environment-variable snapshot.
+
+
+## Model discovery and authentication
+
+- `GET /v1/models` is intentionally public so Claude Desktop can discover configured model aliases before inference.
+- `POST /v1/messages` remains protected by `GATEWAY_API_KEY`.
+- The gateway key and `UPSTREAM_API_KEY` are different credentials. A successful model-list request does not verify the upstream API key.

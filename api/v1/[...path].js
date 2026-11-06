@@ -2,6 +2,38 @@ const crypto = require('node:crypto');
 
 const BASE_URL = (process.env.UPSTREAM_BASE_URL || 'https://api.abihomelabs.dpdns.org/v1').replace(/\/+$/, '');
 
+const DEFAULT_MODEL_MAP = {
+  // These are Claude-style model IDs for Claude Desktop's model picker.
+  // They are aliases only: requests are routed to the Gemini IDs below.
+  'claude-opus-5-5': { upstream: 'gemini-3.1-pro', displayName: 'Claude Opus 5.5 (Gemini-backed)' },
+  'claude-sonnet-5-5': { upstream: 'gemini-3.7-flash', displayName: 'Claude Sonnet 5.5 (Gemini-backed)' },
+  'claude-haiku-5-5': { upstream: 'gemini-3.5-flash', displayName: 'Claude Haiku 5.5 (Gemini-backed)' },
+};
+
+function getModelMap() {
+  const raw = process.env.MODEL_MAP;
+  if (!raw) return DEFAULT_MODEL_MAP;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('MODEL_MAP must be a JSON object.');
+    }
+    return parsed;
+  } catch (error) {
+    throw new Error('Invalid MODEL_MAP JSON: ' + error.message);
+  }
+}
+
+function resolveUpstreamModel(modelId) {
+  const entry = getModelMap()[modelId];
+  if (!entry) return modelId;
+  return typeof entry === 'string' ? entry : entry.upstream;
+}
+
+function modelDisplayName(modelId, entry) {
+  return (entry && typeof entry === 'object' && entry.displayName) || modelId;
+}
+
 function json(res, status, body, extraHeaders = {}) {
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
@@ -137,7 +169,7 @@ function toOpenAIToolChoice(choice) {
 
 function toOpenAIRequest(body) {
   const request = {
-    model: body.model,
+    model: resolveUpstreamModel(body.model),
     messages: toOpenAIMessages(body),
     stream: Boolean(body.stream),
   };
@@ -193,7 +225,7 @@ function makeAnthropicMessage(completion, requestedModel, requestBody) {
     id: completion.id ? 'msg_' + completion.id.replace(/[^a-zA-Z0-9_-]/g, '') : 'msg_' + crypto.randomUUID().replace(/-/g, ''),
     type: 'message',
     role: 'assistant',
-    model: completion.model || requestedModel,
+    model: requestedModel,
     content,
     stop_reason: mapStopReason(choice.finish_reason),
     stop_sequence: null,
@@ -214,28 +246,22 @@ async function readBody(req) {
 }
 
 async function handleModels(req, res) {
-  let headers;
-  try { headers = getUpstreamHeaders(false); }
-  catch (error) { return anthropicError(res, 503, error.message, 'api_error'); }
   try {
-    const upstream = await fetch(BASE_URL + '/models', { method: 'GET', headers });
-    const raw = await upstream.text();
-    if (!upstream.ok) return anthropicError(res, upstream.status, 'Upstream model-list request failed: ' + raw.slice(0, 1200));
-    let parsed;
-    try { parsed = JSON.parse(raw); } catch { return anthropicError(res, 502, 'Upstream /models returned invalid JSON.', 'api_error'); }
-    const list = Array.isArray(parsed.data) ? parsed.data : Array.isArray(parsed.models) ? parsed.models : [];
-    const data = list.map((item) => {
-      const id = typeof item === 'string' ? item : item.id || item.name;
-      return id ? {
-        type: 'model',
-        id,
-        display_name: item.display_name || id,
-        created_at: item.created_at || '2026-01-01T00:00:00Z',
-      } : null;
-    }).filter(Boolean);
-    return json(res, 200, { data, has_more: false, first_id: data[0]?.id || null, last_id: data.at(-1)?.id || null });
+    const modelMap = getModelMap();
+    const data = Object.entries(modelMap).map(([id, entry]) => ({
+      type: 'model',
+      id,
+      display_name: modelDisplayName(id, entry),
+      created_at: '2026-01-01T00:00:00Z',
+    }));
+    return json(res, 200, {
+      data,
+      has_more: false,
+      first_id: data[0]?.id || null,
+      last_id: data.at(-1)?.id || null,
+    });
   } catch (error) {
-    return anthropicError(res, 502, 'Could not reach upstream model endpoint: ' + error.message, 'api_error');
+    return anthropicError(res, 500, error.message, 'api_error');
   }
 }
 

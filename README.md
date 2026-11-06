@@ -36,3 +36,28 @@ After adding or changing environment variables, redeploy the project so the new 
 - Tool use and image inputs are translated for common OpenAI-compatible implementations. Provider-specific extensions, audio, video, prompt caching, and extended thinking are not translated.
 - Token counts returned by the count-token endpoint are estimates. Non-streaming calls use upstream usage when available.
 - Do not commit real API keys to source control. Keep them in Vercel environment variables.
+
+
+## Claude-style model aliases
+
+Claude Desktop's gateway configuration expects model IDs that look like Claude IDs. This bridge therefore publishes Claude-style aliases and translates them to Gemini model IDs. **These are naming aliases, not actual Anthropic Claude models**; all inference still runs on the Gemini upstream.
+
+Default aliases:
+
+| Claude Desktop model ID | Display name | Gemini upstream model |
+|---|---|---|
+| `claude-opus-5-5` | Claude Opus 5.5 (Gemini-backed) | `gemini-3.1-pro` |
+| `claude-sonnet-5-5` | Claude Sonnet 5.5 (Gemini-backed) | `gemini-3.7-flash` |
+| `claude-haiku-5-5` | Claude Haiku 5.5 (Gemini-backed) | `gemini-3.5-flash` |
+
+You can override these aliases with a `MODEL_MAP` JSON object in Vercel, for example:
+
+```json
+{
+  "claude-opus-5-5": {"upstream":"gemini-3.1-pro","displayName":"Claude Opus 5.5 (Gemini-backed)"},
+  "claude-sonnet-5-5": {"upstream":"gemini-3.7-flash","displayName":"Claude Sonnet 5.5 (Gemini-backed)"},
+  "claude-haiku-5-5": {"upstream":"gemini-3.5-flash","displayName":"Claude Haiku 5.5 (Gemini-backed)"}
+}
+```
+
+After changing code or environment variables, redeploy the Vercel project.

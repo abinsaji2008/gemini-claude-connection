@@ -379,6 +379,15 @@ async function handleMessages(req, res) {
         const parsed = JSON.parse(raw);
         message = parsed.error?.message || parsed.message || message;
       } catch { /* keep raw upstream error */ }
+      if (upstream.status === 401 || upstream.status === 403) {
+        return anthropicError(
+          res,
+          502,
+          'The upstream Gemini-compatible API rejected UPSTREAM_API_KEY (HTTP ' + upstream.status + '): ' + message +
+            ' Check the upstream key and its required authentication header/prefix in Vercel.',
+          'api_error'
+        );
+      }
       return anthropicError(res, upstream.status, 'Upstream API error: ' + message);
     }
     if (body.stream) return await streamCompletion(upstream, req, res, body);

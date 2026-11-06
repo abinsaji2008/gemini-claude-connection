@@ -236,6 +236,79 @@ function makeAnthropicMessage(completion, requestedModel, requestBody) {
   };
 }
 
+function streamAnthropicMessage(res, message) {
+  res.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-cache, no-transform',
+    connection: 'keep-alive',
+    'x-accel-buffering': 'no',
+  });
+
+  sseEvent(res, 'message_start', {
+    type: 'message_start',
+    message: {
+      id: message.id,
+      type: 'message',
+      role: 'assistant',
+      model: message.model,
+      content: [],
+      stop_reason: null,
+      stop_sequence: null,
+      usage: {
+        input_tokens: message.usage.input_tokens,
+        output_tokens: 0,
+      },
+    },
+  });
+
+  let index = 0;
+  for (const block of (message.content || [])) {
+    if (block.type === 'text') {
+      sseEvent(res, 'content_block_start', {
+        type: 'content_block_start',
+        index,
+        content_block: { type: 'text', text: '' },
+      });
+      if (block.text) {
+        sseEvent(res, 'content_block_delta', {
+          type: 'content_block_delta',
+          index,
+          delta: { type: 'text_delta', text: block.text },
+        });
+      }
+    } else if (block.type === 'tool_use') {
+      sseEvent(res, 'content_block_start', {
+        type: 'content_block_start',
+        index,
+        content_block: {
+          type: 'tool_use',
+          id: block.id,
+          name: block.name,
+          input: {},
+        },
+      });
+      sseEvent(res, 'content_block_delta', {
+        type: 'content_block_delta',
+        index,
+        delta: { type: 'input_json_delta', partial_json: JSON.stringify(block.input || {}) },
+      });
+    }
+    sseEvent(res, 'content_block_stop', { type: 'content_block_stop', index });
+    index++;
+  }
+
+  sseEvent(res, 'message_delta', {
+    type: 'message_delta',
+    delta: {
+      stop_reason: message.stop_reason || 'end_turn',
+      stop_sequence: null,
+    },
+    usage: { output_tokens: message.usage.output_tokens || 0 },
+  });
+  sseEvent(res, 'message_stop', { type: 'message_stop' });
+  res.end();
+}
+
 async function readBody(req) {
   if (req.body && typeof req.body === 'object') return req.body;
   const chunks = [];
@@ -366,11 +439,16 @@ async function handleMessages(req, res) {
   try { headers = getUpstreamHeaders(true); }
   catch (error) { return anthropicError(res, 503, error.message, 'api_error'); }
   const payload = toOpenAIRequest(body);
+  // Some OpenAI-compatible Gemini gateways accept stream=true but return a
+  // non-SSE body, causing clients such as Claude Desktop to show a blank reply.
+  // Fetch a complete JSON completion and emit valid Anthropic SSE ourselves.
+  payload.stream = false;
   try {
     const upstream = await fetch(BASE_URL + '/chat/completions', {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(105000),
     });
     if (!upstream.ok) {
       const raw = await upstream.text();
@@ -390,9 +468,10 @@ async function handleMessages(req, res) {
       }
       return anthropicError(res, upstream.status, 'Upstream API error: ' + message);
     }
-    if (body.stream) return await streamCompletion(upstream, req, res, body);
     const completion = await upstream.json();
-    return json(res, 200, makeAnthropicMessage(completion, body.model, body));
+    const message = makeAnthropicMessage(completion, body.model, body);
+    if (body.stream) return streamAnthropicMessage(res, message);
+    return json(res, 200, message);
   } catch (error) {
     return anthropicError(res, 502, 'Could not reach upstream chat endpoint: ' + error.message, 'api_error');
   }

@@ -1,0 +1,7 @@
+{
+  "name": "anthropic-openai-compatible-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Anthropic Messages API to OpenAI-compatible chat completions bridge for Claude Desktop third-party inference.",
+  "engines": { "node": ">=20" }
+}
